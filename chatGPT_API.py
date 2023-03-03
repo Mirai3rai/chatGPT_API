@@ -6,7 +6,7 @@ import asyncio
 import json
 from os.path import dirname
 from pathlib import Path
-
+from datetime import datetime
 
 sv_help = """
 #GPT <...>
@@ -36,7 +36,7 @@ with open(config_path, "r", encoding="utf-8") as fp:
     config = json.load(fp)
     assert config.get("token", "") != "", "ChatGPT module needs a token!"
     openai.api_key = config["token"]
-    openai.proxy = config.get("proxy", "")  
+    openai.proxy = config.get("proxy", "")
 
 # from nonebot import on_startup
 # @on_startup
@@ -44,16 +44,20 @@ with open(config_path, "r", encoding="utf-8") as fp:
 #     pass
 
 
-def saveSettings(dic:dict) -> None:     
+def getNowtime() -> int:
+    return int(datetime.timestamp(datetime.now()))
+
+
+def saveSettings(dic: dict) -> None:
     with open(settings_path, "w", encoding='utf=8') as fp:
         json.dump(dic, fp, ensure_ascii=False, indent=4)
-        
 
-def saveContext(dic:dict) -> None:
+
+def saveContext(dic: dict) -> None:
     with open(context_path, "w", encoding='utf=8') as fp:
         json.dump(dic, fp, ensure_ascii=False, indent=4)
-        
-        
+
+
 def getSettings() -> dict:
     if not settings_path.exists():
         saveSettings({})
@@ -66,19 +70,19 @@ def getContext() -> dict:
         saveContext({})
     with open(context_path, "r", encoding='utf=8') as fp:
         return json.load(fp)
-    
-    
+
+
 @sv.on_fullmatch(('GPT', 'gpt', "GPT帮助", "gpt帮助"), only_to_me=False)
-async def send_help(bot, ev):
+async def sendHelp(bot, ev):
     await bot.send(ev, sv_help)
 
 
-async def get_chat_response(prompt: str, setting: str = None, context: list = None) -> str:
+async def getChatResponse(prompt: str, setting: str = None, context: list = None) -> str:
     msg = []
     if setting is not None:
         msg.append({"role": "system", "content": setting})
     if context is not None:
-        msg.append += context
+        msg += context
     msg.append({"role": "user", "content": prompt})
     response = await openai.ChatCompletion.acreate(model="gpt-3.5-turbo", messages=msg)
     response = response.choices[0].message.content
@@ -90,18 +94,19 @@ def beautiful(msg: str) -> str:
     beautiful_message.parse(curpath / 'textfilter/sensitive_words.txt')
     return beautiful_message.filter(msg)
 
+
 lck = asyncio.Lock()
 
 
-async def _chatGPT_method(prompt: str, setting: str = None, context: list = None) -> str:
+async def _chatGptMethod(prompt: str, setting: str = None, context: list = None) -> str:
     if lck.locked():
         await asyncio.sleep(3)
 
     async with lck:
         try:
-            resp = await get_chat_response(prompt, setting)
+            resp = await getChatResponse(prompt, setting, context)
         except Exception as e:
-            resp = f'Failed: {e}'
+            resp = f'Fail. {e}'
         else:
             pass  # resp = beautiful(resp)
         finally:
@@ -109,18 +114,28 @@ async def _chatGPT_method(prompt: str, setting: str = None, context: list = None
 
 
 @sv.on_prefix(('#GPT', '#gpt'), only_to_me=False)
-async def chatGPT_method(bot, ev):
-    uid = ev.user_id
+async def chatGptMethod(bot, ev):
+    uid = str(ev.user_id)
     msg = str(ev.message.extract_plain_text()).strip()
     settings = getSettings()
+
+    context = getContext()
+    user_context = context[uid]["context"] if (getNowtime() - context.get(uid, {}).get("time", -1) <= 300) else None
     
-    # print(settings.get(str(uid), None))
-    ret = await _chatGPT_method(msg, settings.get(str(uid), None))
+    ret = await _chatGptMethod(msg, settings.get(uid, None), user_context)
+
+    if "Fail." not in ret:
+        context[uid] = {
+            "context": [{"role": "user", "content": msg}, {"role": "assistant", "content": ret}],
+            "time": getNowtime()
+        }
+        saveContext(context)
+
     await bot.send(ev, ret, at_sender=True)
 
 
 @sv.on_prefix(('GPT定制', 'gpt定制', 'gpt设定', 'GPT设定'))
-async def reset_setting(bot, ev):
+async def chatGptSetting(bot, ev):
     uid = str(ev.user_id)
     msg = str(ev.message.extract_plain_text()).strip()
     outp = []
@@ -128,14 +143,14 @@ async def reset_setting(bot, ev):
     if len(msg) > 32:
         await bot.finish(ev, "太长力！")
     settings = getSettings()
-    
+
     if len(msg) and msg not in ["重置", "清空"]:
         if uid in settings:
             outp.append(f'chat的原角色设定为：{settings[uid]}')
         settings[uid] = msg
         saveSettings(settings)
         outp.append(f'chat的现角色设定为：{msg}')
-        outp.append(f'角色设定测试：{await _chatGPT_method("你是谁？", msg)}')
+        # outp.append(f'角色设定测试：{await _chatGPT_method("你是谁？", msg)}')
     else:
         if uid in settings:
             outp.append(f'chat的当前角色设定为：{settings[uid]}')
