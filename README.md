@@ -1,6 +1,6 @@
 # chatGPT_API
 
-简单改动原版插件，使之调用api来回复。
+简单改动[原版插件](https://github.com/Poppy-xiao/chatGPT)，使之调用api来回复。
 
 ## 部署
 - 在`hoshino/modules`下打开powershell，输入`pip install openai`安装依赖
