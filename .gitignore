@@ -1,1 +1,4 @@
 config.json
+data
+__pycache__
+textfilter/__pycache__

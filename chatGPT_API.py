@@ -3,56 +3,10 @@ from hoshino.typing import CQEvent
 import openai
 from .textfilter.filter import DFAFilter
 import asyncio
-import os
 import json
-from os.path import dirname, join
-from nonebot import on_startup
+from os.path import dirname
+from pathlib import Path
 
-
-curpath = dirname(__file__)
-context_path = join(curpath, 'data/context.json')
-settings_path = join(curpath, 'data/settings.json')
-config_path = join(curpath, 'config.json')
-
-TOKEN = ""
-assert os.path.exists(config_path), "ChatGPT module needs a token!"
-with open(config_path, "r", encoding="utf-8") as fp:
-    config = json.load(fp)
-    assert "TOKEN" in config, "ChatGPT module needs a token!"
-    TOKEN = config["TOKEN"]
-
-
-# @on_startup
-# async def onStartup():
-#     pass
-
-
-def saveSettings(dic:dict) -> None:
-    with open(settings_path, "w", encoding='utf=8') as fp:
-        json.dump(dic, fp, ensure_ascii=False, indent=4)
-        
-
-def saveContext(dic:dict) -> None:
-    with open(context_path, "w", encoding='utf=8') as fp:
-        json.dump(dic, fp, ensure_ascii=False, indent=4)
-        
-        
-def getSettings() -> dict:
-    if not os.path.exists(settings_path):
-        saveSettings({})
-    with open(settings_path, "r", encoding='utf=8') as fp:
-        return json.load(fp)
-
-
-def getContext() -> dict:
-    if not os.path.exists(context_path):
-        saveContext({})
-    with open(context_path, "r", encoding='utf=8') as fp:
-        return json.load(fp)
-    
-        
-openai.api_key = "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"  # 配置OpenAI的API密钥
-# openai.proxy = ""  # 格式类似：http://127.0.0.1:1080
 
 sv_help = """
 #GPT <...>
@@ -69,7 +23,51 @@ sv = Service(
     help_=sv_help  # 帮助说明
 )
 
+curpath = Path(dirname(__file__))
+data_path = curpath / "data"
+data_path.mkdir(exist_ok=True)
+context_path = data_path / "context.json"
+settings_path = data_path / "settings.json"
+config_path = curpath / "config.json"
 
+
+assert config_path.exists(), "Please make a copy of [config.jon.example] and config your token"
+with open(config_path, "r", encoding="utf-8") as fp:
+    config = json.load(fp)
+    assert config.get("token", "") != "", "ChatGPT module needs a token!"
+    openai.api_key = config["token"]
+    openai.proxy = config.get("proxy", "")  
+
+# from nonebot import on_startup
+# @on_startup
+# async def onStartup():
+#     pass
+
+
+def saveSettings(dic:dict) -> None:     
+    with open(settings_path, "w", encoding='utf=8') as fp:
+        json.dump(dic, fp, ensure_ascii=False, indent=4)
+        
+
+def saveContext(dic:dict) -> None:
+    with open(context_path, "w", encoding='utf=8') as fp:
+        json.dump(dic, fp, ensure_ascii=False, indent=4)
+        
+        
+def getSettings() -> dict:
+    if not settings_path.exists():
+        saveSettings({})
+    with open(settings_path, "r", encoding='utf=8') as fp:
+        return json.load(fp)
+
+
+def getContext() -> dict:
+    if not context_path.exists():
+        saveContext({})
+    with open(context_path, "r", encoding='utf=8') as fp:
+        return json.load(fp)
+    
+    
 @sv.on_fullmatch(('GPT', 'gpt', "GPT帮助", "gpt帮助"), only_to_me=False)
 async def send_help(bot, ev):
     await bot.send(ev, sv_help)
@@ -89,10 +87,8 @@ async def get_chat_response(prompt: str, setting: str = None, context: list = No
 
 def beautiful(msg: str) -> str:
     beautiful_message = DFAFilter()
-    beautiful_message.parse(os.path.join(os.path.dirname(__file__), 'textfilter/sensitive_words.txt'))
-    msg = beautiful_message.filter(msg)
-    return msg
-
+    beautiful_message.parse(curpath / 'textfilter/sensitive_words.txt')
+    return beautiful_message.filter(msg)
 
 lck = asyncio.Lock()
 
@@ -133,7 +129,7 @@ async def reset_setting(bot, ev):
         await bot.finish(ev, "太长力！")
     settings = getSettings()
     
-    if len(msg) and msg != "重置":
+    if len(msg) and msg not in ["重置", "清空"]:
         if uid in settings:
             outp.append(f'chat的原角色设定为：{settings[uid]}')
         settings[uid] = msg
