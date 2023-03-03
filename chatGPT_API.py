@@ -1,24 +1,20 @@
-from hoshino import Service, priv, log
+from hoshino import Service, priv, log, logger
 from hoshino.typing import CQEvent
 import openai
 from .textfilter.filter import DFAFilter
 import asyncio
-import os
 import json
+from os.path import dirname
+from pathlib import Path
 
-# 配置OpenAI的API密钥
-openai.api_key = ""
-openai.proxy = ""  # 格式类似：http://127.0.0.1:1080
-user_session = dict()
-block_groups = []
 
-sv_help = """ 
-你自己设置的前缀 + 你要说的话就能实现
-[设置+屏蔽+开/关] 控制开关屏蔽，每次重启bot以后重新设置
-[设置+本群状态] 查询本群是否被屏蔽
-"""
+sv_help = """
+#GPT <...>
+GPT设定 你是<...>
+GPT设定重置
+""".strip()
 sv = Service(
-    name="chatGPT_API",  # 功能名
+    name="chatGPT",  # 功能名
     use_priv=priv.NORMAL,  # 使用权限
     manage_priv=priv.SUPERUSER,  # 管理权限
     visible=True,  # 可见性
@@ -27,112 +23,127 @@ sv = Service(
     help_=sv_help  # 帮助说明
 )
 
+curpath = Path(dirname(__file__))
+data_path = curpath / "data"
+data_path.mkdir(exist_ok=True)
+context_path = data_path / "context.json"
+settings_path = data_path / "settings.json"
+config_path = curpath / "config.json"
 
-async def get_chat_response(prompt, setting='你是一个人工助手，负责帮助人回答他们的问题'):
-    response = await openai.ChatCompletion.acreate(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": setting},
-            {"role": "user", "content": prompt}])
+
+assert config_path.exists(), "Please make a copy of [config.jon.example] and config your token"
+with open(config_path, "r", encoding="utf-8") as fp:
+    config = json.load(fp)
+    assert config.get("token", "") != "", "ChatGPT module needs a token!"
+    openai.api_key = config["token"]
+    openai.proxy = config.get("proxy", "")  
+
+# from nonebot import on_startup
+# @on_startup
+# async def onStartup():
+#     pass
+
+
+def saveSettings(dic:dict) -> None:     
+    with open(settings_path, "w", encoding='utf=8') as fp:
+        json.dump(dic, fp, ensure_ascii=False, indent=4)
+        
+
+def saveContext(dic:dict) -> None:
+    with open(context_path, "w", encoding='utf=8') as fp:
+        json.dump(dic, fp, ensure_ascii=False, indent=4)
+        
+        
+def getSettings() -> dict:
+    if not settings_path.exists():
+        saveSettings({})
+    with open(settings_path, "r", encoding='utf=8') as fp:
+        return json.load(fp)
+
+
+def getContext() -> dict:
+    if not context_path.exists():
+        saveContext({})
+    with open(context_path, "r", encoding='utf=8') as fp:
+        return json.load(fp)
+    
+    
+@sv.on_fullmatch(('GPT', 'gpt', "GPT帮助", "gpt帮助"), only_to_me=False)
+async def send_help(bot, ev):
+    await bot.send(ev, sv_help)
+
+
+async def get_chat_response(prompt: str, setting: str = None, context: list = None) -> str:
+    msg = []
+    if setting is not None:
+        msg.append({"role": "system", "content": setting})
+    if context is not None:
+        msg.append += context
+    msg.append({"role": "user", "content": prompt})
+    response = await openai.ChatCompletion.acreate(model="gpt-3.5-turbo", messages=msg)
+    response = response.choices[0].message.content
     return response
 
 
-# 和谐模块
-def beautifulworld(msg: str) -> str:
-    w = ''
-    infolist = msg.split('[')
-    for i in infolist:
-        if i:
-            try:
-                w = w + '[' + i.split(']')[0] + ']' + beautiful(i.split(']')[1])
-            except:
-                w = w + beautiful(i)
-    return w
-
-
-# 切换和谐词库
 def beautiful(msg: str) -> str:
     beautiful_message = DFAFilter()
-    beautiful_message.parse(os.path.join(os.path.dirname(__file__), 'textfilter/sensitive_words.txt'))
-    msg = beautiful_message.filter(msg)
-    return msg
+    beautiful_message.parse(curpath / 'textfilter/sensitive_words.txt')
+    return beautiful_message.filter(msg)
+
+lck = asyncio.Lock()
 
 
-@sv.on_fullmatch(('查设定'))
-async def view_setting(bot, ev):
-    uid = ev.user_id
-    with open('./hoshino/modules/chatGPT_API/data.json', 'r') as f:
-        setting_data = json.load(f)
-    if str(uid) in setting_data:
-        msg = setting_data[str(uid)]
-        await bot.send(ev, "您当前的设定为:" + msg)
-    else:
-        await bot.send(ev, "您还没有自己的专属设定哦~", at_sender=True)
+async def _chatGPT_method(prompt: str, setting: str = None, context: list = None) -> str:
+    if lck.locked():
+        await asyncio.sleep(3)
+
+    async with lck:
+        try:
+            resp = await get_chat_response(prompt, setting)
+        except Exception as e:
+            resp = f'Failed: {e}'
+        else:
+            pass  # resp = beautiful(resp)
+        finally:
+            return resp.strip()
 
 
-@sv.on_prefix(('设定触发词'), only_to_me=False)
+@sv.on_prefix(('#GPT', '#gpt'), only_to_me=False)
 async def chatGPT_method(bot, ev):
     uid = ev.user_id
-    gid = ev.group_id
-    name = ev.sender['nickname']
     msg = str(ev.message.extract_plain_text()).strip()
-    with open('./hoshino/modules/chatGPT_API/data.json', 'r') as f:
-        setting_data = json.load(f)
-    try:
-        if str(uid) in setting_data:
-            resp = await get_chat_response(msg, setting_data[str(uid)])
-        else:
-            resp = await get_chat_response(msg)
-        if gid in block_groups:
-            flit_resp = beautiful(resp.choices[0].message.content)
-        else:
-            flit_resp = resp.choices[0].message.content
-        await bot.send(ev, flit_resp, at_sender=True)
-    except Exception as e:
-        hoshino.logger.exception(e)
-        await bot.send(ev, "出问题了，可以晚点再试试看捏~", at_sender=True)
+    settings = getSettings()
+    
+    # print(settings.get(str(uid), None))
+    ret = await _chatGPT_method(msg, settings.get(str(uid), None))
+    await bot.send(ev, ret, at_sender=True)
 
 
-@sv.on_prefix(('定制GPT'))
+@sv.on_prefix(('GPT定制', 'gpt定制', 'gpt设定', 'GPT设定'))
 async def reset_setting(bot, ev):
-    uid = ev['user_id']
+    uid = str(ev.user_id)
     msg = str(ev.message.extract_plain_text()).strip()
-    with open('./hoshino/modules/chatGPT_API/data.json', 'r') as f:
-        setting_data = json.load(f)
-    setting_data[str(uid)] = msg
-    with open('./hoshino/modules/chatGPT_API/data.json', 'w') as f:
-        json.dump(setting_data, f)
-    await bot.send(ev, "写入完成~", at_sender=True)
+    outp = []
 
-
-@sv.on_prefix(('设置'))
-async def block_set(bot, ev):
-    uid = ev['user_id']
-    gid = ev['group_id']
-    is_su = priv.check_priv(ev, priv.SUPERUSER)
-    args = ev.message.extract_plain_text().split()
-    msg = ''
-    if not is_su:
-        msg = '需要超级用户权限'
-    elif len(args) == 0:
-        msg = '无效参数'
-    elif args[0] == '屏蔽' and len(args) >= 2:
-        global block_status
-        if args[1] == '开' or args[1] == '启用':
-            if gid in block_groups:
-                msg = "开咯~"
-                block_groups.remove(gid)
-            else:
-                msg = "一直开着呢"
-        elif args[1] == '关' or args[1] == '禁用':
-            if gid not in block_groups:
-                msg = "关咯~"
-                block_groups.append(gid)
-            else:
-                msg = "一直关着呢"
-    elif args[0] == '本群状态':
-        if gid in block_groups:
-            msg = '本群没开屏蔽'
+    if len(msg) > 32:
+        await bot.finish(ev, "太长力！")
+    settings = getSettings()
+    
+    if len(msg) and msg not in ["重置", "清空"]:
+        if uid in settings:
+            outp.append(f'chat的原角色设定为：{settings[uid]}')
+        settings[uid] = msg
+        saveSettings(settings)
+        outp.append(f'chat的现角色设定为：{msg}')
+        outp.append(f'角色设定测试：{await _chatGPT_method("你是谁？", msg)}')
+    else:
+        if uid in settings:
+            outp.append(f'chat的当前角色设定为：{settings[uid]}')
+            if msg == "重置":
+                settings.pop(uid)
+                saveSettings(settings)
+                outp.append(f'已重置为默认角色设定')
         else:
-            msg = '本群已开启屏蔽'
-    await bot.send(ev, msg)
+            outp.append(f'chat当前为默认角色设定')
+
+    await bot.send(ev, "\n".join(outp), at_sender=True)
