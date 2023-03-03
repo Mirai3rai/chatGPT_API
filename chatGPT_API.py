@@ -1,4 +1,4 @@
-from hoshino import Service, priv
+from hoshino import Service, priv, log
 from hoshino.typing import CQEvent
 import openai
 from .textfilter.filter import DFAFilter
@@ -8,6 +8,7 @@ import json
 
 # 配置OpenAI的API密钥
 openai.api_key = ""
+openai.proxy = ""  # 格式类似：http://127.0.0.1:1080
 user_session = dict()
 block_groups = []
 
@@ -26,13 +27,15 @@ sv = Service(
     help_=sv_help  # 帮助说明
 )
 
-def get_chat_response(prompt, setting='你是一个人工助手，负责帮助人回答他们的问题'):
-    response = openai.ChatCompletion.create(
+
+async def get_chat_response(prompt, setting='你是一个人工助手，负责帮助人回答他们的问题'):
+    response = await openai.ChatCompletion.acreate(
         model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": setting},
-            {"role": "user", "content": prompt}]).choices[0].message.content
+            {"role": "user", "content": prompt}])
     return response
+
 
 # 和谐模块
 def beautifulworld(msg: str) -> str:
@@ -54,6 +57,7 @@ def beautiful(msg: str) -> str:
     msg = beautiful_message.filter(msg)
     return msg
 
+
 @sv.on_fullmatch(('查设定'))
 async def view_setting(bot, ev):
     uid = ev.user_id
@@ -61,11 +65,12 @@ async def view_setting(bot, ev):
         setting_data = json.load(f)
     if str(uid) in setting_data:
         msg = setting_data[str(uid)]
-        await bot.send(ev, "您当前的设定为:"+msg)
+        await bot.send(ev, "您当前的设定为:" + msg)
     else:
         await bot.send(ev, "您还没有自己的专属设定哦~", at_sender=True)
 
-@sv.on_prefix(('触发'), only_to_me=False)
+
+@sv.on_prefix(('设定触发词'), only_to_me=False)
 async def chatGPT_method(bot, ev):
     uid = ev.user_id
     gid = ev.group_id
@@ -75,16 +80,18 @@ async def chatGPT_method(bot, ev):
         setting_data = json.load(f)
     try:
         if str(uid) in setting_data:
-            resp = get_chat_response(msg, setting_data[str(uid)])
+            resp = await get_chat_response(msg, setting_data[str(uid)])
         else:
-            resp = get_chat_response(msg)
+            resp = await get_chat_response(msg)
         if gid in block_groups:
-            flit_resp = beautiful(resp)
+            flit_resp = beautiful(resp.choices[0].message.content)
         else:
-            flit_resp = resp
+            flit_resp = resp.choices[0].message.content
         await bot.send(ev, flit_resp, at_sender=True)
-    except:
+    except Exception as e:
+        hoshino.logger.exception(e)
         await bot.send(ev, "出问题了，可以晚点再试试看捏~", at_sender=True)
+
 
 @sv.on_prefix(('定制GPT'))
 async def reset_setting(bot, ev):
@@ -96,6 +103,7 @@ async def reset_setting(bot, ev):
     with open('./hoshino/modules/chatGPT_API/data.json', 'w') as f:
         json.dump(setting_data, f)
     await bot.send(ev, "写入完成~", at_sender=True)
+
 
 @sv.on_prefix(('设置'))
 async def block_set(bot, ev):
@@ -128,5 +136,3 @@ async def block_set(bot, ev):
         else:
             msg = '本群已开启屏蔽'
     await bot.send(ev, msg)
-
-
