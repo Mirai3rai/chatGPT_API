@@ -7,7 +7,9 @@
 
 然后输入`git clone https://github.com/Mirai3rai/chatGPT_API.git`来拉取仓库
 
-之后改动__init__.py，第9行填入你的api，57行修改你自己的触发词。
+之后改动__init__.py，第10行填入你的api，73行修改你自己的触发词。
+
+可选项：第11行填入你的科学上网小代码，有效帮助一些奇奇怪怪的网络问题
 
 最后在星乃的__bot__.py中加入"chatGPT_API"。
 
