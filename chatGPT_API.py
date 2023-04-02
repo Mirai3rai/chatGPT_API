@@ -7,6 +7,9 @@ import json
 from os.path import dirname
 from pathlib import Path
 from datetime import datetime
+from .utils.duckduckgo_search import web_search
+from .utils.search_prompt import compile_prompt
+from .utils.search_abc import *
 
 sv_help = """
 #GPT <...>
@@ -107,8 +110,6 @@ async def _chatGptMethod(prompt: str, setting: str = None, context: list = None)
             resp = await getChatResponse(prompt, setting, context)
         except Exception as e:
             resp = f'Fail. {e}'
-        else:
-            pass  # resp = beautiful(resp)
         finally:
             return resp.strip()
 
@@ -117,6 +118,17 @@ async def _chatGptMethod(prompt: str, setting: str = None, context: list = None)
 async def chatGptMethod(bot, ev):
     uid = str(ev.user_id)
     msg = str(ev.message.extract_plain_text()).strip()
+    
+    if msg.startswith('搜索'):
+        msg = msg[2:].strip()
+        if msg == "":
+            await bot.send(ev, "请输入要搜索的内容", at_sender=True)
+            return
+        search_request = SearchRequest(msg)
+        search_results = web_search(search_request, 5)
+        msg = compile_prompt(search_results, msg)
+        
+    
     settings = getSettings()
 
     context = getContext()
@@ -151,14 +163,13 @@ async def chatGptSetting(bot, ev):
         saveSettings(settings)
         outp.append(f'chat的现角色设定为：{msg}')
         # outp.append(f'角色设定测试：{await _chatGPT_method("你是谁？", msg)}')
+    elif uid in settings:
+        outp.append(f'chat的当前角色设定为：{settings[uid]}')
+        if msg == "重置":
+            settings.pop(uid)
+            saveSettings(settings)
+            outp.append('已重置为默认角色设定')
     else:
-        if uid in settings:
-            outp.append(f'chat的当前角色设定为：{settings[uid]}')
-            if msg == "重置":
-                settings.pop(uid)
-                saveSettings(settings)
-                outp.append(f'已重置为默认角色设定')
-        else:
-            outp.append(f'chat当前为默认角色设定')
+        outp.append('chat当前为默认角色设定')
 
     await bot.send(ev, "\n".join(outp), at_sender=True)
